@@ -126,7 +126,7 @@ export default function App() {
         onLogout={handleLogout}
       />
       
-      <main className="flex-1 flex flex-col relative">
+      <main className="flex-1 flex flex-col relative overflow-hidden min-h-0">
         {currentStep === 1 && (
           <Step1Schema 
             onNext={() => setCurrentStep(2)} 
