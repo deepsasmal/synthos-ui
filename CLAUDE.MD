@@ -27,10 +27,22 @@
 ## Task Management
 
 - Write plan to `tasks/todo.md` with checkable items. Check in before starting implementation.
+- Also write what you have done in `docs/progress.md` with writing what you have done and implemented
 - Mark items done as you go. Add a review section when complete.
-- After ANY user correction: update `tasks/lessons.md` with a rule that prevents recurrence.
+- After ANY user correction: update `docs/lessons.md` with a rule that prevents recurrence.
 - Enter plan mode for non-trivial tasks (3+ steps or architectural decisions). Re-plan immediately if something goes sideways.
 - Use subagents to keep main context clean — offload research and parallel analysis.
+
+
+## Documentation Convention
+
+Every implemented feature gets a corresponding document under `docs/<feature>/`, numbered in chronological order with a two-digit prefix: `00_<name>.md`, `01_<name>.md`, `02_<name>.md`, …
+
+- `00_` is the spec/overview; later numbers are plans, implementations, and follow-ups in the order they happened.
+- When you implement something, add (or update) its numbered doc in the feature's folder — what was built, key decisions, verification results, known constraints.
+- Continue the existing sequence in a folder — never renumber existing files. Fix cross-links if files are renamed.
+- Example: `docs/synthos/00_frontend-spec.md`, `01_feature-plan.md`, `02_frontend-implementation.md`.
+
 
 ## If You Encounter Something Surprising
 

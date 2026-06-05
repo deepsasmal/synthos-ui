@@ -1,26 +1,3 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
-
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/006f2d2d-825d-46a9-81ee-296940c0b538
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
-
-
-
 # Project: Synthetic Data Generator - Phase 1
 **Phase 1 Objective:** Establish the foundational collaborative workspace where a User and an AI Agent can seamlessly co-create and edit Entity-Relationship (ER) database schemas in real-time.
 
@@ -53,6 +30,5 @@ Based on the architecture, the core SQLite table required to manage the shared w
 * Generating synthetic rows using LLMs.
 * Seeding bulk data using SDV (Synthetic Data Vault) or Faker.
 * Exporting data to external databases.
-
 *** 
 *Note: The primary technical challenge for Phase 1 will be establishing the real-time or near-real-time synchronization loop between the SQLite database updates (performed by the AI) and the frontend React/Vue canvas.*

@@ -23,9 +23,11 @@
 @layer base {
   :root {
     --text-color: #ededed;
+    color-scheme: dark;
   }
-  
+
   .light {
+    color-scheme: light;
     --color-base: #f9fafb;
     --color-surface: #ffffff;
     --color-surface-hover: #f3f4f6;

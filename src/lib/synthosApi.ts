@@ -58,6 +58,14 @@ export interface SchemaRead {
   updated_at: string;
 }
 
+export interface AgentRun {
+  run_id: string;
+  status: string;
+  run_input: string;
+  content: string;
+  created_at: string;
+}
+
 class SynthosApiClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const url = `${BASE_URL}${path}`;
@@ -162,8 +170,92 @@ class SynthosApiClient {
     });
   }
 
+  // Cached once per page load — db_id never changes for a deployed agent
+  private _agentDbId: string | null = null;
+
+  async getAgentDbId(): Promise<string> {
+    if (this._agentDbId) return this._agentDbId;
+    const agents = await this.request<any[]>("/agents");
+    const agent = agents.find((a: any) => a.id === "synthos-schema-agent");
+    if (!agent) throw new Error("synthos-schema-agent not found in /agents");
+    this._agentDbId = agent.db_id as string;
+    return this._agentDbId;
+  }
+
+  // Returns [] on 404 (no chat yet) — callers treat that as empty history.
+  async getSessionRuns(projectId: string): Promise<AgentRun[]> {
+    const dbId = await this.getAgentDbId();
+    try {
+      return await this.request<AgentRun[]>(
+        `/sessions/${encodeURIComponent(projectId)}/runs?type=agent&db_id=${encodeURIComponent(dbId)}`
+      );
+    } catch (err: any) {
+      if (/404|not found/i.test(err.message ?? "")) return [];
+      throw err;
+    }
+  }
+
   openSchemaStream(projectId: string): EventSource {
     return new EventSource(`${BASE_URL}/synthos/projects/${projectId}/schema/stream`);
+  }
+
+  // Streams an agent run, calling onDelta for each text token and onEvent for all SSE events.
+  // Resolves when the stream ends, rejects on network/HTTP errors.
+  async streamAgentRun(
+    message: string,
+    sessionId: string,
+    callbacks: {
+      onDelta: (text: string) => void;
+      onEvent: (name: string, data: any) => void;
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const form = new FormData();
+    form.append("message", message);
+    form.append("session_id", sessionId);
+    form.append("stream", "true");
+
+    const resp = await fetch(
+      `${BASE_URL}/agents/synthos-schema-agent/runs?session_id=${encodeURIComponent(sessionId)}`,
+      { method: "POST", body: form, signal }
+    );
+
+    if (!resp.ok) {
+      let detail = `${resp.status} ${resp.statusText}`;
+      try { detail = ((await resp.json()) as any).detail ?? detail; } catch {}
+      throw new Error(detail);
+    }
+
+    const reader = resp.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE blocks are separated by double newlines
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop()!;
+
+      for (const block of blocks) {
+        let eventName = "message";
+        let dataLine = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event: ")) eventName = line.slice(7).trim();
+          else if (line.startsWith("data: ")) dataLine = line.slice(6);
+        }
+        if (!dataLine) continue;
+        try {
+          const data = JSON.parse(dataLine);
+          callbacks.onEvent(eventName, data);
+          if (eventName === "RunContent" && data.content) {
+            callbacks.onDelta(data.content);
+          }
+        } catch { /* ignore malformed */ }
+      }
+    }
   }
 }
 
