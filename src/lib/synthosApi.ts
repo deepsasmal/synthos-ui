@@ -208,7 +208,7 @@ class SynthosApiClient {
         try {
           const data = JSON.parse(dataLine);
           callbacks.onEvent(eventName, data);
-          if (eventName === "RunContent" && data.content) callbacks.onDelta(data.content);
+          if ((eventName === "RunContent" || eventName === "TeamRunContent") && data.content) callbacks.onDelta(data.content);
         } catch { /* ignore malformed SSE block */ }
       }
     }
