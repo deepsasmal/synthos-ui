@@ -17,9 +17,10 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Trash2, Key, Link as LinkIcon, Send, Sparkles, Loader2, ArrowRight, BarChart3 } from "lucide-react";
+import { Plus, Trash2, Key, Link as LinkIcon, Send, Sparkles, Loader2, ArrowRight, LayoutGrid, TableProperties } from "lucide-react";
 import { Button } from "../ui/Button";
 import { ChatSidebar } from "../chat/ChatSidebar";
+import { DataTablePanel } from "../data/DataTablePanel";
 import { cn } from "@/src/lib/utils";
 import { motion, AnimatePresence } from "motion/react";
 import { synthosApi, SchemaData, DataCard } from "../../lib/synthosApi";
@@ -605,10 +606,14 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
   const [isLoadingSchema, setIsLoadingSchema] = useState(true);
   const [chatLayout, setChatLayout] = useState<'detecting' | 'centered' | 'sidebar'>('detecting');
   const [generatedTables, setGeneratedTables] = useState<DataCard[]>([]);
+  const [canvasView, setCanvasView] = useState<"schema" | "data">("schema");
 
   const fetchGeneratedTables = useCallback(() => {
     synthosApi.getProjectData(projectId)
-      .then(setGeneratedTables)
+      .then((tables) => {
+        setGeneratedTables(tables);
+        if (tables.length > 0) setCanvasView("data");
+      })
       .catch(() => {});
   }, [projectId]);
 
@@ -869,71 +874,98 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
         )}
       </AnimatePresence>
 
-      {/* Canvas — always rendered so SSE updates appear live during centered chat */}
-      <div className="flex-1 relative flex flex-col bg-base">
-        <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
-          <div className="flex items-center gap-2 bg-surface border border-border p-1.5 rounded-lg shadow-lg">
-            <Button variant="ghost" size="sm" className="gap-1.5 transition-all duration-150 hover:scale-105 active:scale-95" onClick={handleAddTable}>
-              <Plus className="h-3.5 w-3.5" /> Table
-            </Button>
-          </div>
-          <CanvasLegend />
-        </div>
+      {/* Canvas / Data panel — toggles between ER diagram and table view */}
+      <div className="flex-1 relative flex flex-col bg-base overflow-hidden">
 
-        {/* Generated data status panel — appears once the agent has produced CSVs */}
-        <AnimatePresence>
-          {generatedTables.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 8, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.96 }}
-              transition={{ type: "spring", stiffness: 420, damping: 34 }}
-              className="absolute bottom-4 left-4 z-10 bg-surface/90 backdrop-blur-sm border border-border rounded-xl shadow-lg px-3.5 py-2.5 flex items-center gap-3 max-w-xs"
-            >
-              <div className="w-6 h-6 rounded-md bg-accent/10 border border-accent/20 flex items-center justify-center flex-none">
-                <BarChart3 className="w-3.5 h-3.5 text-accent/70" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-mono text-muted/60 uppercase tracking-wide">Generated</p>
-                <p className="text-xs text-[color:var(--text-color)] truncate font-medium mt-0.5">
-                  {generatedTables.map((t) => t.table).join(", ")}
-                </p>
-              </div>
-              <button
-                onClick={onNext}
-                className="flex-none flex items-center gap-1 text-[11px] text-accent hover:opacity-80 transition-opacity font-medium"
+        {/* Top-left toolbar — only visible in schema view */}
+        {canvasView === "schema" && (
+          <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
+            <div className="flex items-center gap-2 bg-surface border border-border p-1.5 rounded-lg shadow-lg">
+              <Button variant="ghost" size="sm" className="gap-1.5 transition-all duration-150 hover:scale-105 active:scale-95" onClick={handleAddTable}>
+                <Plus className="h-3.5 w-3.5" /> Table
+              </Button>
+            </div>
+            <CanvasLegend />
+            {/* View toggle — only shown when data exists */}
+            {generatedTables.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.92 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ type: "spring", stiffness: 480, damping: 32 }}
+                className="flex items-center bg-surface border border-border rounded-lg p-1 gap-0.5 shadow-lg"
               >
-                View <ArrowRight className="w-3 h-3" />
-              </button>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setCanvasView("schema")}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-mono bg-white/10 text-[color:var(--text-color)] transition-colors"
+                  title="Schema view"
+                >
+                  <LayoutGrid className="w-3 h-3" /> Schema
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setCanvasView("data")}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-mono text-muted hover:text-[color:var(--text-color)] transition-colors"
+                  title="Data view"
+                >
+                  <TableProperties className="w-3 h-3" /> Data
+                </motion.button>
+              </motion.div>
+            )}
+          </div>
+        )}
+
+        <AnimatePresence mode="wait">
+          {canvasView === "schema" ? (
+            <motion.div
+              key="schema"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="flex-1 w-full h-full"
+            >
+              <ReactFlow
+                nodes={nodesWithCallbacks}
+                edges={edges}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onConnect={onConnect}
+                onNodeDragStop={onNodeDragStop}
+                nodeTypes={nodeTypes}
+                colorMode={theme}
+                fitView
+                className="bg-base"
+              >
+                <svg style={{ position: "absolute", width: 0, height: 0 }}>
+                  <defs>
+                    <linearGradient id="fk-pk-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#3b82f6" />
+                      <stop offset="100%" stopColor="#f59e0b" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <Background color="#2a2d35" gap={24} size={2} />
+                <Controls className="!bg-surface !border-border !fill-white" />
+              </ReactFlow>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="data"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ type: "spring", stiffness: 420, damping: 34 }}
+              className="flex-1 h-full overflow-hidden"
+            >
+              <DataTablePanel
+                projectId={projectId}
+                tables={generatedTables}
+                onBack={() => setCanvasView("schema")}
+              />
             </motion.div>
           )}
         </AnimatePresence>
-
-        <div className="flex-1 w-full h-full">
-          <ReactFlow
-            nodes={nodesWithCallbacks}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeDragStop={onNodeDragStop}
-            nodeTypes={nodeTypes}
-            colorMode={theme}
-            fitView
-            className="bg-base"
-          >
-            <svg style={{ position: "absolute", width: 0, height: 0 }}>
-              <defs>
-                <linearGradient id="fk-pk-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#3b82f6" />
-                  <stop offset="100%" stopColor="#f59e0b" />
-                </linearGradient>
-              </defs>
-            </svg>
-            <Background color="#2a2d35" gap={24} size={2} />
-            <Controls className="!bg-surface !border-border !fill-white" />
-          </ReactFlow>
-        </div>
       </div>
 
       {/* Centered chat overlay — fresh projects only */}
@@ -963,7 +995,7 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
               onRunComplete={fetchGeneratedTables}
               bottomAction={
                 <Button variant="primary" className="w-full" onClick={onNext}>
-                  Generate Data &rarr;
+                  Next &rarr;
                 </Button>
               }
             />

@@ -314,7 +314,10 @@ class SynthosApiClient {
   // ── Generated data ───────────────────────────────────────────────────────
   async getProjectData(projectId: string): Promise<DataCard[]> {
     try {
-      return await this.request<DataCard[]>(`/synthos/projects/${projectId}/data`);
+      const res = await this.request<{ project_id: string; tables: DataCard[] }>(
+        `/synthos/projects/${projectId}/data`
+      );
+      return res.tables ?? [];
     } catch (err: any) {
       if (/404|not found/i.test(err.message ?? "")) return [];
       throw err;
