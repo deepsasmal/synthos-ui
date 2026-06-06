@@ -1,113 +1,119 @@
-import { useState, useEffect } from "react";
-import { Download, FileJson, FileSpreadsheet, Database, FileCode2, Loader2 } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Download, FileJson, FileSpreadsheet, Database, FileCode2, Loader2, ArrowLeft } from "lucide-react";
 import { Button } from "../ui/Button";
 import { ChatSidebar } from "../chat/ChatSidebar";
+import { synthosApi, DataCard } from "../../lib/synthosApi";
 import { cn } from "@/src/lib/utils";
 
-const summaryCards = [
-  { name: "users", rows: "10,000", size: "~2.4 MB CSV", bars: [30, 45, 60, 50, 70, 85, 100, 90, 75, 60, 40, 55] },
-  { name: "orders", rows: "47,832", size: "~8.1 MB CSV", bars: [20, 35, 50, 40, 60, 80, 95, 85, 70, 55, 35, 45] },
-  { name: "products", rows: "2,500", size: "~0.8 MB CSV", bars: [100, 95, 98, 100, 90, 85, 95, 100, 98, 95, 90, 85] },
-  { name: "order_items", rows: "143,496", size: "~15.2 MB CSV", bars: [15, 30, 45, 35, 55, 75, 90, 80, 65, 50, 30, 40] },
-];
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
-const chatMessages = [
-  { role: "user" as const, content: "Scale to full dataset — 10k users, proportional orders and items" },
-  { role: "ai" as const, content: "Full dataset generated. Applied Gaussian copula for price/quantity distributions. Markov chain for order status sequences. Referential integrity validated — 0 orphaned FKs." },
-];
+interface Step3ExportProps {
+  projectId: string;
+  onBack: () => void;
+  onRestart: () => void;
+}
 
-export function Step3Export({ onRestart }: { onRestart: () => void }) {
+export function Step3Export({ projectId, onBack, onRestart }: Step3ExportProps) {
   const [format, setFormat] = useState("CSV");
   const [splitChunks, setSplitChunks] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(true);
+  const [cards, setCards] = useState<DataCard[]>([]);
+  const [loadingCards, setLoadingCards] = useState(true);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsGenerating(false);
-    }, 5000);
-    return () => clearTimeout(timer);
-  }, []);
+  const fetchCards = useCallback(() => {
+    synthosApi.getProjectData(projectId)
+      .then(setCards)
+      .catch(() => {})
+      .finally(() => setLoadingCards(false));
+  }, [projectId]);
+
+  useEffect(() => { fetchCards(); }, [fetchCards]);
 
   return (
     <div className="flex h-full w-full overflow-hidden">
       {/* Left Panel - Summary & Export */}
-      <div className="flex-1 flex flex-col bg-base overflow-y-auto p-8 relative">
-        {isGenerating && (
-          <div className="absolute inset-0 z-50 bg-base flex flex-col items-center justify-center">
-            <Loader2 className="h-12 w-12 text-accent animate-spin mb-6" />
-            <h2 className="font-display text-2xl font-semibold mb-2">Data generation in progress</h2>
-            <p className="text-muted text-sm font-mono animate-pulse">Generating full dataset and validating referential integrity...</p>
-          </div>
-        )}
+      <div className="flex-1 flex flex-col bg-base overflow-hidden min-w-0">
+        {/* Header */}
+        <div className="flex-none border-b border-border bg-surface px-5 h-12 flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-xs text-muted hover:text-[color:var(--text-color)] transition-colors group"
+          >
+            <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform duration-150" />
+            Data
+          </button>
+          <div className="w-px h-4 bg-border" />
+          <span className="font-display font-semibold text-sm text-[color:var(--text-color)]">Export</span>
+          {cards.length > 0 && (
+            <span className="text-[10px] font-mono text-muted/50 bg-white/4 border border-border/60 px-1.5 py-0.5 rounded-full">
+              {cards.length} table{cards.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
 
-        <div className="max-w-4xl mx-auto w-full flex flex-col gap-8">
-          
-          <div>
-            <h2 className="font-display text-2xl font-semibold mb-2">Dataset Ready</h2>
-            <p className="text-muted text-sm">
-              ML distribution model applied — Gaussian copula for numeric columns, Markov chain for sequences.
-            </p>
-          </div>
+        <div className="flex-1 overflow-y-auto p-8 min-h-0">
+          {loadingCards ? (
+            <div className="flex items-center justify-center h-full gap-3 text-muted">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm font-mono">Loading dataset…</span>
+            </div>
+          ) : (
+            <div className="max-w-4xl mx-auto w-full flex flex-col gap-8">
+              <div>
+                <h2 className="font-display text-2xl font-semibold mb-1.5">Export Dataset</h2>
+                <p className="text-muted text-sm">
+                  {cards.length > 0
+                    ? `${cards.length} table${cards.length !== 1 ? "s" : ""} ready — ${cards.reduce((s, c) => s + c.rows, 0).toLocaleString()} total rows, ${formatBytes(cards.reduce((s, c) => s + c.size_bytes, 0))}`
+                    : "No data generated yet. Ask Synthos to generate data first."}
+                </p>
+              </div>
 
-          {/* Quality Report Strip */}
-          <div className="bg-surface border border-border rounded-lg p-4 flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-xs text-muted uppercase tracking-wider font-mono mb-1">Fidelity Score</span>
-              <span className="text-xl font-display font-medium text-green-400">94.2%</span>
-            </div>
-            <div className="w-px h-10 bg-border" />
-            <div className="flex flex-col">
-              <span className="text-xs text-muted uppercase tracking-wider font-mono mb-1">Statistical Similarity</span>
-              <span className="text-xl font-display font-medium text-green-400">96.8%</span>
-            </div>
-            <div className="w-px h-10 bg-border" />
-            <div className="flex flex-col">
-              <span className="text-xs text-muted uppercase tracking-wider font-mono mb-1">Referential Integrity</span>
-              <span className="text-xl font-display font-medium text-green-400">100%</span>
-            </div>
-          </div>
-
-          {/* Summary Cards Grid */}
-          <div className="grid grid-cols-2 gap-4">
-            {summaryCards.map((card) => (
-              <div key={card.name} className="bg-surface border border-border rounded-lg p-5 flex flex-col gap-4 hover:border-muted transition-colors">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="font-mono text-lg font-medium text-[color:var(--text-color)]">{card.name}</h3>
-                    <p className="text-sm text-muted mt-1">{card.rows} rows &bull; {card.size}</p>
-                  </div>
-                  <Button variant="secondary" size="icon" className="h-8 w-8 rounded-full">
-                    <Download className="h-4 w-4" />
-                  </Button>
-                </div>
-                
-                {/* Sparkline */}
-                <div className="h-12 flex items-end gap-1 mt-2">
-                  {card.bars.map((height, i) => (
-                    <div 
-                      key={i} 
-                      className="flex-1 bg-accent/20 rounded-t-sm hover:bg-accent/40 transition-colors"
-                      style={{ height: `${height}%` }}
-                    />
+              {/* Per-table download cards */}
+              {cards.length > 0 && (
+                <div className="grid grid-cols-2 gap-4">
+                  {cards.map((card, i) => (
+                    <div key={card.table} className="bg-surface border border-border rounded-xl p-5 flex flex-col gap-4 hover:border-muted/50 transition-colors">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h3 className="font-mono text-base font-semibold text-[color:var(--text-color)]">{card.table}</h3>
+                          <p className="text-xs text-muted mt-1">{card.rows.toLocaleString()} rows &bull; {formatBytes(card.size_bytes)}</p>
+                        </div>
+                        <a
+                          href={synthosApi.getTableDownloadUrl(projectId, card.table)}
+                          download
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-white/5 border border-border hover:bg-white/10 hover:border-muted/50 text-muted hover:text-[color:var(--text-color)] transition-all duration-150"
+                          title={`Download ${card.table}.csv`}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+                      {/* Sparkline */}
+                      <div className="h-10 flex items-end gap-0.5">
+                        {Array.from({ length: 12 }, (_, j) => (
+                          <div
+                            key={j}
+                            className="flex-1 bg-accent/20 hover:bg-accent/35 rounded-t-sm transition-colors"
+                            style={{ height: `${30 + Math.abs(Math.sin((i * 3 + j) * 1.3)) * 70}%` }}
+                          />
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4">
-            <Button variant="primary" size="lg" className="w-full text-lg gap-2 h-14">
-              <Download className="h-5 w-5" /> Download All as ZIP
-            </Button>
-          </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Right Panel - Chat */}
-      <ChatSidebar 
-        title="Export Config"
-        messages={chatMessages}
-        disabled={isGenerating}
+      <ChatSidebar
+        title="Synthos"
+        projectId={projectId}
+        onRunComplete={fetchCards}
         configPanel={
           <div className="flex flex-col gap-5 text-sm">
             <div className="flex flex-col gap-2">
@@ -170,7 +176,7 @@ export function Step3Export({ onRestart }: { onRestart: () => void }) {
           </div>
         }
         bottomAction={
-          <Button variant="ghost" className="w-full" onClick={onRestart} disabled={isGenerating}>
+          <Button variant="ghost" className="w-full" onClick={onRestart}>
             Start New Schema
           </Button>
         }

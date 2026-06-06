@@ -17,12 +17,12 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Trash2, Key, Link as LinkIcon, Send, Sparkles, Loader2, ArrowRight } from "lucide-react";
+import { Plus, Trash2, Key, Link as LinkIcon, Send, Sparkles, Loader2, ArrowRight, BarChart3 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { ChatSidebar } from "../chat/ChatSidebar";
 import { cn } from "@/src/lib/utils";
 import { motion, AnimatePresence } from "motion/react";
-import { synthosApi, SchemaData } from "../../lib/synthosApi";
+import { synthosApi, SchemaData, DataCard } from "../../lib/synthosApi";
 
 type Column = { 
   id: string; 
@@ -603,8 +603,16 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(true);
-  // 'detecting' while history check runs, 'centered' for fresh projects, 'sidebar' for returning ones
   const [chatLayout, setChatLayout] = useState<'detecting' | 'centered' | 'sidebar'>('detecting');
+  const [generatedTables, setGeneratedTables] = useState<DataCard[]>([]);
+
+  const fetchGeneratedTables = useCallback(() => {
+    synthosApi.getProjectData(projectId)
+      .then(setGeneratedTables)
+      .catch(() => {});
+  }, [projectId]);
+
+  useEffect(() => { fetchGeneratedTables(); }, [fetchGeneratedTables]);
 
   // Persists schema state to FastAPI REST backend
   const persistSchema = useCallback(async (currentNodes: Node[], currentEdges: Edge[]) => {
@@ -625,10 +633,10 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
     localStorage.setItem(`synthos_positions_${projectId}`, JSON.stringify(savedPositions));
   }, [projectId]);
 
-  // Determine chat layout from session history
+  // Determine chat layout from session history (check team runs)
   useEffect(() => {
     let cancelled = false;
-    synthosApi.getSessionRuns(projectId)
+    synthosApi.getTeamSessionRuns(projectId)
       .then((runs) => {
         if (cancelled) return;
         const hasHistory = runs.some((r) => r.status === "COMPLETED");
@@ -872,6 +880,35 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
           <CanvasLegend />
         </div>
 
+        {/* Generated data status panel — appears once the agent has produced CSVs */}
+        <AnimatePresence>
+          {generatedTables.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 8, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 420, damping: 34 }}
+              className="absolute bottom-4 left-4 z-10 bg-surface/90 backdrop-blur-sm border border-border rounded-xl shadow-lg px-3.5 py-2.5 flex items-center gap-3 max-w-xs"
+            >
+              <div className="w-6 h-6 rounded-md bg-accent/10 border border-accent/20 flex items-center justify-center flex-none">
+                <BarChart3 className="w-3.5 h-3.5 text-accent/70" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-mono text-muted/60 uppercase tracking-wide">Generated</p>
+                <p className="text-xs text-[color:var(--text-color)] truncate font-medium mt-0.5">
+                  {generatedTables.map((t) => t.table).join(", ")}
+                </p>
+              </div>
+              <button
+                onClick={onNext}
+                className="flex-none flex items-center gap-1 text-[11px] text-accent hover:opacity-80 transition-opacity font-medium"
+              >
+                View <ArrowRight className="w-3 h-3" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="flex-1 w-full h-full">
           <ReactFlow
             nodes={nodesWithCallbacks}
@@ -923,9 +960,10 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
             <ChatSidebar
               title="Synthos"
               projectId={projectId}
+              onRunComplete={fetchGeneratedTables}
               bottomAction={
                 <Button variant="primary" className="w-full" onClick={onNext}>
-                  Finalize Schema &rarr;
+                  Generate Data &rarr;
                 </Button>
               }
             />

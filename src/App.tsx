@@ -137,8 +137,20 @@ export default function App() {
             projectId={projectId!}
           />
         )}
-        {currentStep === 2 && <Step2Data onNext={() => setCurrentStep(3)} />}
-        {currentStep === 3 && <Step3Export onRestart={() => setCurrentStep(1)} />}
+        {currentStep === 2 && (
+          <Step2Data
+            projectId={projectId!}
+            onBack={() => setCurrentStep(1)}
+            onNext={() => setCurrentStep(3)}
+          />
+        )}
+        {currentStep === 3 && (
+          <Step3Export
+            projectId={projectId!}
+            onBack={() => setCurrentStep(2)}
+            onRestart={() => setCurrentStep(1)}
+          />
+        )}
       </main>
     </div>
   );

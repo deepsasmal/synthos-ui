@@ -17,6 +17,7 @@ interface ChatSidebarProps {
   messages?: any[];
   bottomAction?: ReactNode;
   configPanel?: ReactNode;
+  onRunComplete?: () => void;
 }
 
 function renderMarkdown(text: string): string {
@@ -82,7 +83,7 @@ const MIN_WIDTH = 300;
 const MAX_WIDTH = 700;
 const DEFAULT_WIDTH = 380;
 
-export function ChatSidebar({ title, projectId = "", disabled: externalDisabled, bottomAction, configPanel }: ChatSidebarProps) {
+export function ChatSidebar({ title, projectId = "", disabled: externalDisabled, bottomAction, configPanel, onRunComplete }: ChatSidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -132,7 +133,7 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
     setMessages([]);
     setIsLoadingHistory(true);
 
-    synthosApi.getSessionRuns(projectId)
+    synthosApi.getTeamSessionRuns(projectId)
       .then((runs: AgentRun[]) => {
         if (cancelled) return;
         const historical: Message[] = [];
@@ -187,7 +188,7 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
     let accumulated = "";
 
     try {
-      await synthosApi.streamAgentRun(
+      await synthosApi.streamTeamRun(
         msgText,
         projectId,
         {
@@ -211,6 +212,7 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
         abort.signal
       );
       setMessages((prev) => [...prev, { role: "ai", content: accumulated || "(no response)" }]);
+      onRunComplete?.();
     } catch (err: any) {
       if (err?.name === "AbortError") return;
       const msg = err?.message ?? "Unknown error";

@@ -66,6 +66,18 @@ export interface AgentRun {
   created_at: string;
 }
 
+export interface DataCard {
+  table: string;
+  rows: number;
+  size_bytes: number;
+}
+
+export interface TableData {
+  columns: string[];
+  rows: Record<string, any>[];
+  total_rows: number;
+}
+
 class SynthosApiClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const url = `${BASE_URL}${path}`;
@@ -170,6 +182,39 @@ class SynthosApiClient {
     });
   }
 
+  // ── Shared SSE reader ────────────────────────────────────────────────────
+  private async _consumeSSE(
+    resp: Response,
+    callbacks: { onDelta: (text: string) => void; onEvent: (name: string, data: any) => void }
+  ): Promise<void> {
+    const reader = resp.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop()!;
+      for (const block of blocks) {
+        let eventName = "message";
+        let dataLine = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event: ")) eventName = line.slice(7).trim();
+          else if (line.startsWith("data: ")) dataLine = line.slice(6);
+        }
+        if (!dataLine) continue;
+        try {
+          const data = JSON.parse(dataLine);
+          callbacks.onEvent(eventName, data);
+          if (eventName === "RunContent" && data.content) callbacks.onDelta(data.content);
+        } catch { /* ignore malformed SSE block */ }
+      }
+    }
+  }
+
+  // ── Agent (schema) ───────────────────────────────────────────────────────
   // Cached once per page load — db_id never changes for a deployed agent
   private _agentDbId: string | null = null;
 
@@ -182,7 +227,78 @@ class SynthosApiClient {
     return this._agentDbId;
   }
 
-  // Returns [] on 404 (no chat yet) — callers treat that as empty history.
+  async streamAgentRun(
+    message: string,
+    sessionId: string,
+    callbacks: { onDelta: (text: string) => void; onEvent: (name: string, data: any) => void },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const form = new FormData();
+    form.append("message", message);
+    form.append("session_id", sessionId);
+    form.append("stream", "true");
+    const resp = await fetch(
+      `${BASE_URL}/agents/synthos-schema-agent/runs?session_id=${encodeURIComponent(sessionId)}`,
+      { method: "POST", body: form, signal }
+    );
+    if (!resp.ok) {
+      let detail = `${resp.status} ${resp.statusText}`;
+      try { detail = ((await resp.json()) as any).detail ?? detail; } catch {}
+      throw new Error(detail);
+    }
+    await this._consumeSSE(resp, callbacks);
+  }
+
+  // ── Team (synthos-route) ─────────────────────────────────────────────────
+  private _teamDbId: string | null = null;
+
+  async getTeamDbId(): Promise<string> {
+    if (this._teamDbId) return this._teamDbId;
+    const teams = await this.request<any[]>("/teams");
+    const team = teams.find((t: any) => t.id === "synthos-route");
+    if (!team) throw new Error("synthos-route not found in /teams");
+    this._teamDbId = team.db_id as string;
+    return this._teamDbId;
+  }
+
+  // Returns [] on 404 (no chat yet).
+  async getTeamSessionRuns(projectId: string): Promise<AgentRun[]> {
+    const dbId = await this.getTeamDbId();
+    try {
+      return await this.request<AgentRun[]>(
+        `/sessions/${encodeURIComponent(projectId)}/runs?type=team&db_id=${encodeURIComponent(dbId)}`
+      );
+    } catch (err: any) {
+      if (/404|not found/i.test(err.message ?? "")) return [];
+      throw err;
+    }
+  }
+
+  async streamTeamRun(
+    message: string,
+    sessionId: string,
+    callbacks: { onDelta: (text: string) => void; onEvent: (name: string, data: any) => void },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const form = new FormData();
+    form.append("message", message);
+    form.append("session_id", sessionId);
+    form.append("stream", "true");
+    const resp = await fetch(`${BASE_URL}/teams/synthos-route/runs`, { method: "POST", body: form, signal });
+    if (!resp.ok) {
+      let detail = `${resp.status} ${resp.statusText}`;
+      try { detail = ((await resp.json()) as any).detail ?? detail; } catch {}
+      throw new Error(detail);
+    }
+    await this._consumeSSE(resp, callbacks);
+  }
+
+  // ── Schema SSE ───────────────────────────────────────────────────────────
+  openSchemaStream(projectId: string): EventSource {
+    return new EventSource(`${BASE_URL}/synthos/projects/${projectId}/schema/stream`);
+  }
+
+  // ── Session runs (legacy agent path — kept for backwards compat) ─────────
   async getSessionRuns(projectId: string): Promise<AgentRun[]> {
     const dbId = await this.getAgentDbId();
     try {
@@ -195,67 +311,24 @@ class SynthosApiClient {
     }
   }
 
-  openSchemaStream(projectId: string): EventSource {
-    return new EventSource(`${BASE_URL}/synthos/projects/${projectId}/schema/stream`);
+  // ── Generated data ───────────────────────────────────────────────────────
+  async getProjectData(projectId: string): Promise<DataCard[]> {
+    try {
+      return await this.request<DataCard[]>(`/synthos/projects/${projectId}/data`);
+    } catch (err: any) {
+      if (/404|not found/i.test(err.message ?? "")) return [];
+      throw err;
+    }
   }
 
-  // Streams an agent run, calling onDelta for each text token and onEvent for all SSE events.
-  // Resolves when the stream ends, rejects on network/HTTP errors.
-  async streamAgentRun(
-    message: string,
-    sessionId: string,
-    callbacks: {
-      onDelta: (text: string) => void;
-      onEvent: (name: string, data: any) => void;
-    },
-    signal?: AbortSignal
-  ): Promise<void> {
-    const form = new FormData();
-    form.append("message", message);
-    form.append("session_id", sessionId);
-    form.append("stream", "true");
-
-    const resp = await fetch(
-      `${BASE_URL}/agents/synthos-schema-agent/runs?session_id=${encodeURIComponent(sessionId)}`,
-      { method: "POST", body: form, signal }
+  async getTableData(projectId: string, table: string, limit = 50): Promise<TableData> {
+    return this.request<TableData>(
+      `/synthos/projects/${projectId}/data/${encodeURIComponent(table)}?limit=${limit}`
     );
+  }
 
-    if (!resp.ok) {
-      let detail = `${resp.status} ${resp.statusText}`;
-      try { detail = ((await resp.json()) as any).detail ?? detail; } catch {}
-      throw new Error(detail);
-    }
-
-    const reader = resp.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE blocks are separated by double newlines
-      const blocks = buffer.split("\n\n");
-      buffer = blocks.pop()!;
-
-      for (const block of blocks) {
-        let eventName = "message";
-        let dataLine = "";
-        for (const line of block.split("\n")) {
-          if (line.startsWith("event: ")) eventName = line.slice(7).trim();
-          else if (line.startsWith("data: ")) dataLine = line.slice(6);
-        }
-        if (!dataLine) continue;
-        try {
-          const data = JSON.parse(dataLine);
-          callbacks.onEvent(eventName, data);
-          if (eventName === "RunContent" && data.content) {
-            callbacks.onDelta(data.content);
-          }
-        } catch { /* ignore malformed */ }
-      }
-    }
+  getTableDownloadUrl(projectId: string, table: string): string {
+    return `${BASE_URL}/synthos/projects/${projectId}/data/${encodeURIComponent(table)}/download`;
   }
 }
 
