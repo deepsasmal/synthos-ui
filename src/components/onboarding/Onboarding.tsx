@@ -343,7 +343,7 @@ export function Onboarding({ userId, onComplete, theme, toggleTheme }: Onboardin
                     
                     <div className="z-10 flex-1">
                       <div className="flex items-center justify-between gap-4 mb-2">
-                        <h3 className="font-display font-semibold text-base group-hover:text-accent transition-colors truncate">{project.project_name}</h3>
+                        <h3 className="font-display font-semibold text-base text-[color:var(--text-color)] group-hover:text-accent transition-colors truncate">{project.project_name}</h3>
                         <button
                           onClick={(e) => handleDeleteProject(project.project_id, e)}
                           className="text-muted hover:text-red-400 p-1.5 rounded-lg hover:bg-red-400/10 transition-colors shrink-0"

@@ -52,14 +52,31 @@ function toolLabel(rawName: string): string {
 // ── Markdown renderer ────────────────────────────────────────────────────────
 function renderMarkdown(text: string): string {
   return text
-    .replace(/```[\w]*\n?([\s\S]*?)```/g, "<pre><code>$1</code></pre>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+    .replace(/\r/g, "")                                                   // normalise line endings
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, "<pre><code>$1</code></pre>")   // fenced code
+    .replace(/`([^`]+)`/g, "<code>$1</code>")                             // inline code
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")                     // bold
+    .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")                             // italic
     .replace(/^### (.+)$/gm, "<h4>$1</h4>")
     .replace(/^## (.+)$/gm, "<h3>$1</h3>")
     .replace(/^# (.+)$/gm, "<h2>$1</h2>")
     .replace(/^---$/gm, "<hr/>")
+    // tables  (header | sep | rows)
+    .replace(/((?:^\|.+\|\s*\n?){2,})/gm, (block) => {
+      const lines = block.trim().split("\n").filter(Boolean);
+      if (lines.length < 2) return block;
+      const parse = (line: string) =>
+        line.split("|").slice(1, -1).map((c) => c.trim());
+      const headers = parse(lines[0]);
+      const isSep = (l: string) => /^\|[\s\-|:]+\|$/.test(l.trim());
+      const bodyLines = lines.slice(isSep(lines[1]) ? 2 : 1);
+      const thead = `<thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead>`;
+      const tbody = bodyLines
+        .map((l) => `<tr>${parse(l).map((c) => `<td>${c}</td>`).join("")}</tr>`)
+        .join("");
+      return `<table>${thead}<tbody>${tbody}</tbody></table>`;
+    })
+    // bullet lists
     .replace(/((?:^- .+\n?)+)/gm, (block) => {
       const items = block.trim().split("\n").filter(Boolean).map((l) => `<li>${l.slice(2)}</li>`).join("");
       return `<ul>${items}</ul>`;
@@ -71,7 +88,7 @@ function renderMarkdown(text: string): string {
 function MarkdownMessage({ content }: { content: string }) {
   return (
     <div
-      className="text-sm leading-[1.65] [&_strong]:font-semibold [&_strong]:text-[color:var(--text-color)] [&_em]:italic [&_code]:font-mono [&_code]:text-xs [&_code]:bg-white/6 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded-md [&_pre]:bg-white/5 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:mt-1.5 [&_pre]:overflow-x-auto [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_h2]:font-semibold [&_h2]:text-[color:var(--text-color)] [&_h2]:text-sm [&_h2]:mt-3 [&_h2]:mb-1 [&_h3]:font-semibold [&_h3]:text-[color:var(--text-color)] [&_h3]:text-xs [&_h3]:mt-2 [&_h4]:font-medium [&_h4]:text-xs [&_ul]:list-none [&_ul]:space-y-1 [&_ul]:mt-1.5 [&_li]:flex [&_li]:gap-2 [&_li]:before:content-['·'] [&_li]:before:text-muted/60 [&_li]:before:font-bold [&_hr]:border-border [&_hr]:my-2"
+      className="text-sm leading-[1.65] [&_strong]:font-semibold [&_strong]:text-[color:var(--text-color)] [&_em]:italic [&_code]:font-mono [&_code]:text-xs [&_code]:bg-white/6 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded-md [&_pre]:bg-white/5 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:mt-1.5 [&_pre]:overflow-x-auto [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_h2]:font-semibold [&_h2]:text-[color:var(--text-color)] [&_h2]:text-sm [&_h2]:mt-3 [&_h2]:mb-1 [&_h3]:font-semibold [&_h3]:text-[color:var(--text-color)] [&_h3]:text-xs [&_h3]:mt-2 [&_h4]:font-medium [&_h4]:text-xs [&_ul]:list-none [&_ul]:space-y-1 [&_ul]:mt-1.5 [&_li]:flex [&_li]:gap-2 [&_li]:before:content-['·'] [&_li]:before:text-muted/60 [&_li]:before:font-bold [&_hr]:border-border [&_hr]:my-2 [&_table]:w-full [&_table]:border-collapse [&_table]:text-xs [&_table]:font-mono [&_table]:my-2 [&_table]:rounded-lg [&_table]:overflow-hidden [&_thead]:bg-white/5 [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-semibold [&_th]:text-[color:var(--text-color)]/70 [&_th]:border-b [&_th]:border-border/50 [&_td]:px-3 [&_td]:py-1.5 [&_td]:border-b [&_td]:border-border/25 [&_td]:text-muted/80 [&_tr:last-child_td]:border-b-0 [&_tr:hover_td]:bg-white/[0.02]"
       dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
     />
   );
