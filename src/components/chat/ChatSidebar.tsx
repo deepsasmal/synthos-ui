@@ -1,12 +1,23 @@
-import { Send, ChevronRight, MessageSquare, AlertCircle, Wrench, RefreshCw, Sparkles, ChevronDown } from "lucide-react";
+import {
+  Send, ChevronRight, MessageSquare, AlertCircle, RefreshCw,
+  Sparkles, ChevronDown, Loader2, Check, X, Zap,
+} from "lucide-react";
 import React, { useState, useRef, useEffect, ReactNode, useCallback } from "react";
-import { motion, AnimatePresence, useSpring, useTransform } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { synthosApi, AgentRun } from "../../lib/synthosApi";
 import { cn } from "@/src/lib/utils";
 
 interface Message {
   role: "user" | "ai" | "error";
   content: string;
+  toolCalls?: ToolCallItem[];
+}
+
+interface ToolCallItem {
+  id: string;
+  name: string;
+  label: string;
+  status: "running" | "done" | "error";
 }
 
 interface ChatSidebarProps {
@@ -20,6 +31,25 @@ interface ChatSidebarProps {
   onRunComplete?: () => void;
 }
 
+// ── Tool name → human label ──────────────────────────────────────────────────
+function toolLabel(rawName: string): string {
+  const n = rawName.toLowerCase();
+  if (n.includes("get_schema") || n.includes("load_schema") || n.includes("read_schema") || n.includes("fetch_schema")) return "Reading schema";
+  if (n.includes("update_schema") || n.includes("edit_schema") || n.includes("write_schema") || n.includes("patch_schema") || n.includes("set_schema")) return "Editing schema";
+  if (n.includes("create_table") || n.includes("add_table")) return "Creating table";
+  if (n.includes("delete_table") || n.includes("drop_table") || n.includes("remove_table")) return "Removing table";
+  if (n.includes("add_column") || n.includes("create_column")) return "Adding column";
+  if (n.includes("validate")) return "Validating schema";
+  if (n.includes("generate") || n.includes("synth")) return "Generating data";
+  if (n.includes("relationship") || n.includes("foreign_key")) return "Linking tables";
+  if (n.includes("get") || n.includes("fetch") || n.includes("read") || n.includes("load")) return "Fetching data";
+  if (n.includes("create") || n.includes("write") || n.includes("insert")) return "Creating records";
+  if (n.includes("update") || n.includes("edit") || n.includes("modify")) return "Updating records";
+  if (n.includes("delete") || n.includes("remove")) return "Removing records";
+  return rawName.replace(/_/g, " ");
+}
+
+// ── Markdown renderer ────────────────────────────────────────────────────────
 function renderMarkdown(text: string): string {
   return text
     .replace(/```[\w]*\n?([\s\S]*?)```/g, "<pre><code>$1</code></pre>")
@@ -79,6 +109,128 @@ function AgentAvatar({ streaming }: { streaming?: boolean }) {
   );
 }
 
+// ── Live tool execution feed ─────────────────────────────────────────────────
+function ToolCallFeed({ calls, collapsed }: { calls: ToolCallItem[]; collapsed?: boolean }) {
+  const [isOpen, setIsOpen] = useState(true);
+  if (calls.length === 0) return null;
+
+  const runningCount = calls.filter((c) => c.status === "running").length;
+  const doneCount = calls.filter((c) => c.status === "done").length;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 500, damping: 36 }}
+      className="mb-2.5 rounded-lg border border-border/60 bg-white/[0.025] overflow-hidden"
+    >
+      {/* Feed header */}
+      <button
+        onClick={() => setIsOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-1.5 border-b border-border/40 hover:bg-white/[0.02] transition-colors duration-150"
+      >
+        <Zap className="w-2.5 h-2.5 text-accent/50 flex-none" />
+        <span className="text-[10px] font-mono text-muted/50 uppercase tracking-wider flex-1 text-left">
+          Agent Actions
+        </span>
+        <div className="flex items-center gap-1.5">
+          {runningCount > 0 && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-accent/10 border border-accent/20 text-[9px] font-mono text-accent/70">
+              <motion.span
+                animate={{ opacity: [0.5, 1, 0.5] }}
+                transition={{ duration: 1, repeat: Infinity }}
+              >
+                {runningCount} running
+              </motion.span>
+            </span>
+          )}
+          {collapsed && doneCount > 0 && runningCount === 0 && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/8 border border-emerald-500/20 text-[9px] font-mono text-emerald-400/60">
+              {doneCount} done
+            </span>
+          )}
+        </div>
+        <motion.div
+          animate={{ rotate: isOpen ? 0 : -90 }}
+          transition={{ type: "spring", stiffness: 500, damping: 36 }}
+        >
+          <ChevronDown className="w-2.5 h-2.5 text-muted/30" />
+        </motion.div>
+      </button>
+
+      {/* Tool call rows */}
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0 }}
+            animate={{ height: "auto" }}
+            exit={{ height: 0 }}
+            transition={{ type: "spring", stiffness: 500, damping: 38 }}
+            className="overflow-hidden"
+          >
+            <div className="py-1">
+              <AnimatePresence initial={false}>
+                {calls.map((call, i) => (
+                  <motion.div
+                    key={call.id}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 36, delay: i * 0.03 }}
+                    className="flex items-center gap-2.5 px-3 py-1.5 group"
+                  >
+                    {/* Status icon */}
+                    <div className="flex-none w-4 flex items-center justify-center">
+                      {call.status === "running" ? (
+                        <Loader2 className="w-3 h-3 text-accent/70 animate-spin" />
+                      ) : call.status === "done" ? (
+                        <motion.div
+                          initial={{ scale: 0.5, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          transition={{ type: "spring", stiffness: 600, damping: 28 }}
+                        >
+                          <Check className="w-3 h-3 text-emerald-400/60" />
+                        </motion.div>
+                      ) : (
+                        <X className="w-3 h-3 text-red-400/60" />
+                      )}
+                    </div>
+
+                    {/* Label */}
+                    <span className={cn(
+                      "text-[11px] font-mono flex-1 transition-colors duration-400",
+                      call.status === "running" ? "text-muted/80" : "text-muted/35"
+                    )}>
+                      {call.label}
+                    </span>
+
+                    {/* Raw tool name on hover */}
+                    <span className="text-[9px] font-mono text-muted/20 opacity-0 group-hover:opacity-100 transition-opacity duration-200 truncate max-w-[90px]">
+                      {call.name}
+                    </span>
+
+                    {/* Status badge */}
+                    {call.status === "running" && (
+                      <motion.div
+                        animate={{ opacity: [0.4, 1, 0.4] }}
+                        transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                        className="w-1 h-1 rounded-full bg-accent/60 flex-none"
+                      />
+                    )}
+                    {call.status === "done" && (
+                      <div className="w-1 h-1 rounded-full bg-emerald-400/30 flex-none" />
+                    )}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 700;
 const DEFAULT_WIDTH = 380;
@@ -90,7 +242,7 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
-  const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const [activeTools, setActiveTools] = useState<ToolCallItem[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -156,7 +308,7 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     if (atBottom) el.scrollTop = el.scrollHeight;
-  }, [messages, streamingContent, toolStatus, isLoadingHistory]);
+  }, [messages, streamingContent, activeTools, isLoadingHistory]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -180,12 +332,13 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setIsStreaming(true);
     setStreamingContent("");
-    setToolStatus(null);
+    setActiveTools([]);
     isFirstMessage.current = false;
 
     const abort = new AbortController();
     abortRef.current = abort;
     let accumulated = "";
+    let snapshotTools: ToolCallItem[] = [];
 
     try {
       await synthosApi.streamTeamRun(
@@ -194,16 +347,31 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
         {
           onDelta: (chunk) => { accumulated += chunk; setStreamingContent(accumulated); },
           onEvent: (name, data) => {
+            // Surface raw events in console for debugging
+            console.debug("[SSE]", name, data);
+
             if (name === "ToolCallStarted") {
-              const toolName: string = data.tool?.tool_name ?? data.tool_name ?? "tool";
-              setToolStatus(
-                toolName.includes("edit") || toolName.includes("write") || toolName.includes("update") ? "Editing schema…"
-                : toolName.includes("load") || toolName.includes("read") || toolName.includes("get") ? "Reading schema…"
-                : toolName.includes("valid") ? "Validating tables…"
-                : `Calling ${toolName}…`
-              );
+              const rawName: string = data.tool?.tool_name ?? data.tool_name ?? "unknown_tool";
+              const id = data.tool_call_id ?? data.id ?? `${rawName}-${Date.now()}`;
+              const item: ToolCallItem = { id, name: rawName, label: toolLabel(rawName), status: "running" };
+              setActiveTools((prev) => {
+                snapshotTools = [...prev, item];
+                return snapshotTools;
+              });
             } else if (name === "ToolCallCompleted") {
-              setToolStatus(null);
+              const id = data.tool_call_id ?? data.id ?? null;
+              setActiveTools((prev) => {
+                let updated: ToolCallItem[];
+                if (id) {
+                  updated = prev.map((t) => t.id === id ? { ...t, status: "done" } : t);
+                } else {
+                  // fallback: mark the last running call as done
+                  const lastIdx = [...prev].map((t, i) => ({ t, i })).filter(({ t }) => t.status === "running").at(-1)?.i ?? -1;
+                  updated = lastIdx === -1 ? prev : prev.map((t, i) => i === lastIdx ? { ...t, status: "done" } : t);
+                }
+                snapshotTools = updated;
+                return updated;
+              });
             } else if (name === "RunFailed") {
               throw new Error(data.error ?? "Agent run failed");
             }
@@ -211,7 +379,12 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
         },
         abort.signal
       );
-      setMessages((prev) => [...prev, { role: "ai", content: accumulated || "(no response)" }]);
+      // Attach the final tool call snapshot to the AI message for collapsed history
+      setMessages((prev) => [...prev, {
+        role: "ai",
+        content: accumulated || "(no response)",
+        toolCalls: snapshotTools.length > 0 ? snapshotTools : undefined,
+      }]);
       onRunComplete?.();
     } catch (err: any) {
       if (err?.name === "AbortError") return;
@@ -221,7 +394,7 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
     } finally {
       setIsStreaming(false);
       setStreamingContent("");
-      setToolStatus(null);
+      setActiveTools([]);
       abortRef.current = null;
       setTimeout(() => inputRef.current?.focus(), 50);
     }
@@ -240,6 +413,7 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
   };
 
   const msgCount = messages.length + (isStreaming ? 1 : 0);
+  const runningTools = activeTools.filter((t) => t.status === "running");
 
   /* ── Collapsed state ─────────────────────────────── */
   if (isCollapsed) {
@@ -299,16 +473,24 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
               <span className="font-display font-semibold text-[13px] tracking-tight text-[color:var(--text-color)]">
                 {title}
               </span>
-              <AnimatePresence>
+              <AnimatePresence mode="wait">
                 {isStreaming && (
                   <motion.span
-                    initial={{ opacity: 0, scale: 0.85 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.85 }}
+                    key={runningTools[0]?.label ?? "thinking"}
+                    initial={{ opacity: 0, scale: 0.85, y: -4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.85, y: 4 }}
                     transition={{ type: "spring", stiffness: 500, damping: 30 }}
                     className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-accent/10 border border-accent/20 text-[10px] font-mono text-accent/80"
                   >
-                    Thinking
+                    {runningTools.length > 0 ? (
+                      <>
+                        <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                        {runningTools[0].label}
+                      </>
+                    ) : (
+                      "Thinking…"
+                    )}
                   </motion.span>
                 )}
               </AnimatePresence>
@@ -322,24 +504,55 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
           </button>
         </div>
 
-        {/* Toolbar strip — mirrors the HubSpot filter row */}
+        {/* Status strip */}
         <div className="flex items-center gap-2 px-4 pb-2.5 pt-0.5">
-          {toolStatus ? (
-            <motion.div
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/4 border border-border text-[11px] font-mono text-muted/70"
-            >
-              <Wrench className="h-2.5 w-2.5 animate-spin shrink-0" style={{ animationDuration: "2s" }} />
-              {toolStatus}
-            </motion.div>
-          ) : (
-            <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/3 border border-border/50 text-[11px] font-mono text-muted/40">
-              <span className="w-1.5 h-1.5 rounded-full bg-muted/30" />
-              {isLoadingHistory ? "Loading history…" : !projectId ? "No project" : msgCount === 0 ? "Ready" : `${msgCount} message${msgCount !== 1 ? "s" : ""}`}
-            </div>
-          )}
+          <AnimatePresence mode="wait">
+            {isStreaming && activeTools.length > 0 ? (
+              <motion.div
+                key="tools"
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ type: "spring", stiffness: 500, damping: 36 }}
+                className="flex items-center gap-2"
+              >
+                {/* Mini tool pipeline */}
+                <div className="flex items-center gap-1">
+                  {activeTools.map((t, i) => (
+                    <motion.div
+                      key={t.id}
+                      initial={{ scale: 0, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ type: "spring", stiffness: 500, damping: 28, delay: i * 0.05 }}
+                      className={cn(
+                        "w-2 h-2 rounded-full border",
+                        t.status === "running"
+                          ? "bg-accent/60 border-accent/40"
+                          : "bg-emerald-400/40 border-emerald-400/30"
+                      )}
+                      title={t.label}
+                    />
+                  ))}
+                </div>
+                <span className="text-[11px] font-mono text-muted/50">
+                  {runningTools.length > 0
+                    ? `${runningTools.length} tool${runningTools.length > 1 ? "s" : ""} running`
+                    : `${activeTools.length} tool${activeTools.length > 1 ? "s" : ""} called`}
+                </span>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="status"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/3 border border-border/50 text-[11px] font-mono text-muted/40"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-muted/30" />
+                {isLoadingHistory ? "Loading history…" : !projectId ? "No project" : msgCount === 0 ? "Ready" : `${msgCount} message${msgCount !== 1 ? "s" : ""}`}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -385,7 +598,7 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
           </motion.div>
         )}
 
-        {/* Messages — HubSpot-style divider list */}
+        {/* Messages */}
         {!isLoadingHistory && (
           <div className="divide-y divide-border/30">
             <AnimatePresence initial={false}>
@@ -419,6 +632,10 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
                       <AgentAvatar />
                       <div className="flex flex-col gap-1 min-w-0 flex-1">
                         <span className="text-[10px] font-mono text-accent/50 tracking-wide">Synthos</span>
+                        {/* Collapsed tool trace for completed messages */}
+                        {msg.toolCalls && msg.toolCalls.length > 0 && (
+                          <ToolCallFeed calls={msg.toolCalls} collapsed />
+                        )}
                         <div className="text-muted">
                           <MarkdownMessage content={msg.content} />
                         </div>
@@ -463,7 +680,13 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
                     <div className="flex flex-col gap-1 min-w-0 flex-1">
                       <span className="text-[10px] font-mono text-accent/50 tracking-wide">Synthos</span>
                       <div className="text-muted">
-                        {streamingContent ? <MarkdownMessage content={streamingContent} /> : <TypingDots />}
+                        {/* Live tool feed */}
+                        <ToolCallFeed calls={activeTools} />
+                        {/* Text content */}
+                        {streamingContent
+                          ? <MarkdownMessage content={streamingContent} />
+                          : activeTools.length === 0 && <TypingDots />
+                        }
                       </div>
                     </div>
                   </div>
@@ -473,7 +696,6 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
           </div>
         )}
 
-        {/* Spacer so last message isn't flush with the input bar */}
         <div className="h-2" />
       </div>
 
@@ -499,7 +721,7 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
         </div>
       )}
 
-      {/* ── Footer bar — mirrors HubSpot bottom strip ── */}
+      {/* ── Footer ── */}
       <div className="flex-none border-t border-border bg-surface">
         <div className="px-3 py-2.5">
           <div className={cn(
@@ -538,7 +760,6 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
           </div>
         </div>
 
-        {/* Bottom action strip — same height as HubSpot footer */}
         {bottomAction && (
           <div className="px-3 pb-3">
             {bottomAction}
