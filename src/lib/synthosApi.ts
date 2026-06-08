@@ -283,6 +283,7 @@ class SynthosApiClient {
     const form = new FormData();
     form.append("message", message);
     form.append("session_id", sessionId);
+    form.append("dependencies", JSON.stringify({ project_id: sessionId }));
     form.append("stream", "true");
     const resp = await fetch(`${BASE_URL}/teams/synthos-route/runs`, { method: "POST", body: form, signal });
     if (!resp.ok) {
