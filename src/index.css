@@ -20,9 +20,16 @@
   }
 }
 
+/* Unlayered so these beat @layer base and @layer utilities in the cascade */
+:root {
+  --text-color: #ededed;
+}
+.light {
+  --text-color: #111827;
+}
+
 @layer base {
   :root {
-    --text-color: #ededed;
     color-scheme: dark;
   }
 
@@ -35,7 +42,6 @@
     --color-accent: #000000;
     --color-accent-fg: #ffffff;
     --color-muted: #6b7280;
-    --text-color: #111827;
   }
 
   body {
