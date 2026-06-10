@@ -266,7 +266,8 @@ function HITLForm({
   onSubmit: (filled: HITLRequirement[]) => void;
   onCancel: () => void;
 }) {
-  const req = requirements[0];
+  // Use the first unanswered requirement for display; fall back to last
+  const req = requirements.find((r) => r.tool_execution?.answered == null) ?? requirements[requirements.length - 1];
   const toolName = req?.tool_execution?.tool_name ?? "";
 
   const [tableNames, setTableNames] = useState<string[]>([]);
@@ -279,15 +280,20 @@ function HITLForm({
 
   useEffect(() => {
     if (toolName === "generate_data") {
+      // Use existing values from requirement schema if present (re-pause scenario)
+      const existingField = req?.user_input_schema?.find((f) => f.name === "sample_sizes");
+      const existingMap: Record<string, number> | null =
+        existingField?.value && typeof existingField.value === "object" ? existingField.value : null;
+
       synthosApi.getSchema(projectId)
         .then((s) => {
           const names = s.schema_data.tables.map((t) => t.name);
           setTableNames(names);
-          setSampleSizes(Object.fromEntries(names.map((n) => [n, 20])));
+          setSampleSizes(Object.fromEntries(names.map((n) => [n, existingMap?.[n] ?? 20])));
         })
         .catch(() => {});
     }
-  }, [projectId, toolName]);
+  }, [projectId, toolName, req]);
 
   const buildFilled = (): HITLRequirement[] => {
     const vals: Record<string, any> = {};
@@ -304,14 +310,18 @@ function HITLForm({
     const fillSchema = (fields: HITLRequirement["user_input_schema"]) =>
       fields.map((f) => ({ ...f, value: vals[f.name] !== undefined ? vals[f.name] : f.value }));
 
-    return requirements.map((r) => ({
-      ...r,
-      user_input_schema: fillSchema(r.user_input_schema ?? []),
-      tool_execution: {
-        ...r.tool_execution,
-        user_input_schema: fillSchema(r.tool_execution?.user_input_schema ?? []),
-      },
-    }));
+    return requirements.map((r) => {
+      // Pass already-answered requirements through unchanged
+      if (r.tool_execution?.answered === true) return r;
+      return {
+        ...r,
+        user_input_schema: fillSchema(r.user_input_schema ?? []),
+        tool_execution: {
+          ...r.tool_execution,
+          user_input_schema: fillSchema(r.tool_execution?.user_input_schema ?? []),
+        },
+      };
+    });
   };
 
   const title = toolName === "generate_data" ? "Confirm Data Generation"
@@ -636,6 +646,8 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
     setStreamingContent("");
     setActiveTools([]);
     setPhases([]);
+    isPausedRef.current = false;
+    hitlRef.current = null;
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -651,22 +663,31 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
         },
         abort.signal
       );
-      setMessages((prev) => [...prev, {
-        role: "ai",
-        content: accumulated || "(no response)",
-        toolCalls: snapshotTools.length > 0 ? snapshotTools : undefined,
-      }]);
-      onRunComplete?.();
+      // Resume may itself pause again (another HITL round)
+      if (isPausedRef.current && hitlRef.current) {
+        if (accumulated) setMessages((prev) => [...prev, { role: "ai", content: accumulated }]);
+        setHitl(hitlRef.current);
+      } else {
+        setMessages((prev) => [...prev, {
+          role: "ai",
+          content: accumulated || "(no response)",
+          toolCalls: snapshotTools.length > 0 ? snapshotTools : undefined,
+        }]);
+        onRunComplete?.();
+      }
     } catch (err: any) {
       if (err?.name === "AbortError") return;
       const msg = err?.message ?? "Unknown error";
       setLastError(msg);
       setMessages((prev) => [...prev, { role: "error", content: msg }]);
     } finally {
+      const wasPaused = isPausedRef.current;
       setIsStreaming(false);
       setStreamingContent("");
       setActiveTools([]);
-      setPhases([]);
+      if (!wasPaused) setPhases([]);
+      isPausedRef.current = false;
+      hitlRef.current = null;
       abortRef.current = null;
       setTimeout(() => inputRef.current?.focus(), 50);
     }

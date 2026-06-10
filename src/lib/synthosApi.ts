@@ -93,16 +93,19 @@ export interface HITLField {
 }
 
 export interface HITLRequirement {
+  id?: string;
   tool_execution: {
     tool_call_id: string;
     tool_name: string;
     tool_args: Record<string, any>;
     requires_user_input: boolean;
     user_input_schema: HITLField[];
+    answered?: boolean | null;
   };
   user_input_schema: HITLField[];
-  member_agent_id: string;
-  member_run_id: string;
+  member_agent_id?: string;
+  member_agent_name?: string;
+  member_run_id?: string;
 }
 
 class SynthosApiClient {
