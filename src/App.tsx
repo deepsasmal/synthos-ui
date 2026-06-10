@@ -7,6 +7,7 @@ import { useState, useEffect } from "react";
 import { Stepper } from "./components/layout/Stepper";
 import { Step1Schema } from "./components/steps/Step1Schema";
 import { Step2Data } from "./components/steps/Step2Data";
+import { Step3Scale } from "./components/steps/Step3Scale";
 import { Step3Export } from "./components/steps/Step3Export";
 import { Onboarding } from "./components/onboarding/Onboarding";
 import { synthosApi } from "./lib/synthosApi";
@@ -145,9 +146,16 @@ export default function App() {
           />
         )}
         {currentStep === 3 && (
-          <Step3Export
+          <Step3Scale
             projectId={projectId!}
             onBack={() => setCurrentStep(2)}
+            onNext={() => setCurrentStep(4)}
+          />
+        )}
+        {currentStep === 4 && (
+          <Step3Export
+            projectId={projectId!}
+            onBack={() => setCurrentStep(3)}
             onRestart={() => setCurrentStep(1)}
           />
         )}

@@ -13,8 +13,9 @@ interface StepperProps {
 
 const steps = [
   { id: 1, title: "Schema Designer" },
-  { id: 2, title: "Seed Data Preview" },
-  { id: 3, title: "Full Dataset Export" },
+  { id: 2, title: "Seed Data" },
+  { id: 3, title: "Scale Dataset" },
+  { id: 4, title: "Export" },
 ];
 
 export function Stepper({ currentStep, onStepChange, theme, toggleTheme, projectName, onSwitchProject, onLogout }: StepperProps) {

@@ -78,6 +78,33 @@ export interface TableData {
   total_rows: number;
 }
 
+export interface ScaledQuality {
+  project_id: string;
+  scale: number;
+  validity_score: number;
+  quality_score: number;
+  tables: Record<string, number>;
+}
+
+export interface HITLField {
+  name: string;
+  field_type: string;
+  value: any;
+}
+
+export interface HITLRequirement {
+  tool_execution: {
+    tool_call_id: string;
+    tool_name: string;
+    tool_args: Record<string, any>;
+    requires_user_input: boolean;
+    user_input_schema: HITLField[];
+  };
+  user_input_schema: HITLField[];
+  member_agent_id: string;
+  member_run_id: string;
+}
+
 class SynthosApiClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const url = `${BASE_URL}${path}`;
@@ -333,6 +360,63 @@ class SynthosApiClient {
 
   getTableDownloadUrl(projectId: string, table: string): string {
     return `${BASE_URL}/synthos/projects/${projectId}/data/${encodeURIComponent(table)}/download`;
+  }
+
+  // ── Scaled data ──────────────────────────────────────────────────────────
+  async getScaledData(projectId: string): Promise<DataCard[]> {
+    try {
+      const res = await this.request<{ project_id: string; tables: DataCard[] }>(
+        `/synthos/projects/${projectId}/scaled`
+      );
+      return res.tables ?? [];
+    } catch (err: any) {
+      if (/404|not found/i.test(err.message ?? "")) return [];
+      throw err;
+    }
+  }
+
+  async getScaledQuality(projectId: string): Promise<ScaledQuality | null> {
+    try {
+      return await this.request<ScaledQuality>(`/synthos/projects/${projectId}/scaled/quality`);
+    } catch (err: any) {
+      if (/404|not found/i.test(err.message ?? "")) return null;
+      throw err;
+    }
+  }
+
+  async getScaledTableData(projectId: string, table: string, limit = 50): Promise<TableData> {
+    return this.request<TableData>(
+      `/synthos/projects/${projectId}/scaled/${encodeURIComponent(table)}?limit=${limit}`
+    );
+  }
+
+  getScaledDownloadUrl(projectId: string, table: string): string {
+    return `${BASE_URL}/synthos/projects/${projectId}/scaled/${encodeURIComponent(table)}/download`;
+  }
+
+  // ── HITL continue ────────────────────────────────────────────────────────
+  async continueTeamRun(
+    runId: string,
+    requirements: HITLRequirement[],
+    projectId: string,
+    callbacks: { onDelta: (text: string) => void; onEvent: (name: string, data: any) => void },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const form = new FormData();
+    form.append("requirements", JSON.stringify(requirements));
+    form.append("session_id", projectId);
+    form.append("dependencies", JSON.stringify({ project_id: projectId }));
+    form.append("stream", "true");
+    const resp = await fetch(
+      `${BASE_URL}/teams/synthos-route/runs/${runId}/continue`,
+      { method: "POST", body: form, signal }
+    );
+    if (!resp.ok) {
+      let detail = `${resp.status} ${resp.statusText}`;
+      try { detail = ((await resp.json()) as any).detail ?? detail; } catch {}
+      throw new Error(detail);
+    }
+    await this._consumeSSE(resp, callbacks);
   }
 }
 
