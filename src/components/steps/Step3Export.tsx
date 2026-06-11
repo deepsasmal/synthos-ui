@@ -78,7 +78,7 @@ export function Step3Export({ projectId, onBack, onRestart }: Step3ExportProps) 
                     <div key={card.table} className="bg-surface border border-border rounded-xl p-5 flex flex-col gap-4 hover:border-muted/50 transition-colors">
                       <div className="flex items-start justify-between">
                         <div>
-                          <h3 className="font-mono text-base font-semibold text-[color:var(--text-color)]">{card.table}</h3>
+                          <h3 className="font-mono text-[1rem] font-semibold text-[color:var(--text-color)]">{card.table}</h3>
                           <p className="text-xs text-muted mt-1">{card.rows.toLocaleString()} rows &bull; {formatBytes(card.size_bytes)}</p>
                         </div>
                         <a

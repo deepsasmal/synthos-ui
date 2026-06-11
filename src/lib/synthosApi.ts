@@ -4,7 +4,7 @@
  */
 
 // We default to port 7777 since Swagger documentation indicates the backend runs there.
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:7777";
+const BASE_URL = (import.meta.env.VITE_API_URL as string).replace(/\/$/, "");
 
 export interface User {
   user_id: string;
@@ -56,6 +56,27 @@ export interface SchemaRead {
   project_id: string;
   schema_data: SchemaData;
   updated_at: string;
+}
+
+export interface RunMessage {
+  id?: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content?: string;
+  tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+  tool_call_id?: string;
+  tool_name?: string;
+  from_history?: boolean;
+  created_at?: number;
+}
+
+export interface SessionData {
+  session_id: string;
+  session_name?: string;
+  chat_history?: RunMessage[];
+  metrics?: Record<string, any>;
+  created_at?: string;
+  updated_at?: string;
+  total_tokens?: number;
 }
 
 export interface AgentRun {
@@ -294,17 +315,29 @@ class SynthosApiClient {
     return this._teamDbId;
   }
 
-  // Returns [] on 404 (no chat yet).
-  async getTeamSessionRuns(projectId: string): Promise<AgentRun[]> {
-    const dbId = await this.getTeamDbId();
+  // GET /sessions/{id} returns a SessionData object with chat_history array.
+  async getSession(
+    sessionId: string,
+    type?: "agent" | "team" | "workflow",
+    dbId?: string
+  ): Promise<SessionData | null> {
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    if (dbId) params.set("db_id", dbId);
+    const qs = params.toString();
     try {
-      return await this.request<AgentRun[]>(
-        `/sessions/${encodeURIComponent(projectId)}/runs?type=team&db_id=${encodeURIComponent(dbId)}`
+      return await this.request<SessionData>(
+        `/sessions/${encodeURIComponent(sessionId)}${qs ? `?${qs}` : ""}`
       );
     } catch (err: any) {
-      if (/404|not found/i.test(err.message ?? "")) return [];
+      if (/404|not found/i.test(err.message ?? "")) return null;
       throw err;
     }
+  }
+
+  async getTeamSession(projectId: string): Promise<SessionData | null> {
+    const dbId = await this.getTeamDbId();
+    return this.getSession(projectId, "team", dbId);
   }
 
   async streamTeamRun(
@@ -332,17 +365,9 @@ class SynthosApiClient {
     return new EventSource(`${BASE_URL}/synthos/projects/${projectId}/schema/stream`);
   }
 
-  // ── Session runs (legacy agent path — kept for backwards compat) ─────────
-  async getSessionRuns(projectId: string): Promise<AgentRun[]> {
+  async getAgentSession(projectId: string): Promise<SessionData | null> {
     const dbId = await this.getAgentDbId();
-    try {
-      return await this.request<AgentRun[]>(
-        `/sessions/${encodeURIComponent(projectId)}/runs?type=agent&db_id=${encodeURIComponent(dbId)}`
-      );
-    } catch (err: any) {
-      if (/404|not found/i.test(err.message ?? "")) return [];
-      throw err;
-    }
+    return this.getSession(projectId, "agent", dbId);
   }
 
   // ── Generated data ───────────────────────────────────────────────────────

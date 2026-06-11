@@ -212,7 +212,7 @@ function CenteredChat({ projectId, projectName, onComplete }: CenteredChatProps)
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: 0.2 }}
-                  className="text-muted text-base max-w-md mx-auto leading-relaxed"
+                  className="text-muted text-[1rem] max-w-md mx-auto leading-relaxed"
                 >
                   Describe your domain and I'll design the ER diagram live on the canvas behind me.
                 </motion.p>
@@ -234,7 +234,7 @@ function CenteredChat({ projectId, projectName, onComplete }: CenteredChatProps)
                     placeholder="e.g. An e-commerce platform with customers, orders, products and inventory tracking..."
                     rows={3}
                     style={{ color: 'var(--text-color)' }}
-                    className="w-full bg-surface/90 border-2 border-border hover:border-muted/50 focus:border-accent/60 rounded-2xl px-6 py-5 text-base shadow-2xl focus:outline-none transition-all duration-200 placeholder:text-muted/40 pr-20 resize-none backdrop-blur-sm"
+                    className="w-full bg-surface/90 border-2 border-border hover:border-muted/50 focus:border-accent/60 rounded-2xl px-6 py-5 text-[1rem] shadow-2xl focus:outline-none transition-all duration-200 placeholder:text-muted/40 pr-20 resize-none backdrop-blur-sm"
                   />
                   <Button
                     variant="primary"
@@ -683,19 +683,6 @@ function Step1SchemaInner({ onNext, theme, projectName, userName, userId, projec
     localStorage.setItem(`synthos_positions_${projectId}`, JSON.stringify(savedPositions));
   }, [projectId]);
 
-  // Determine chat layout from session history (check team runs)
-  useEffect(() => {
-    let cancelled = false;
-    synthosApi.getTeamSessionRuns(projectId)
-      .then((runs) => {
-        if (cancelled) return;
-        const hasHistory = runs.some((r) => r.status === "COMPLETED");
-        setChatLayout(hasHistory ? "sidebar" : "centered");
-      })
-      .catch(() => { if (!cancelled) setChatLayout("centered"); });
-    return () => { cancelled = true; };
-  }, [projectId]);
-
   // Initial schema load & SSE Live Sync (no seeding — agent creates the schema for fresh projects)
   useEffect(() => {
     let isMounted = true;
@@ -709,6 +696,7 @@ function Step1SchemaInner({ onNext, theme, projectName, userName, userId, projec
           const { nds, eds } = mapSchemaToCanvas(data.schema_data, projectId);
           setNodes(nds);
           setEdges(eds);
+          setChatLayout("sidebar");
         }
         // Fresh project: leave canvas empty — agent fills it via the centered chat
       } catch (err) {

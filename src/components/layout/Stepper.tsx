@@ -28,7 +28,7 @@ export function Stepper({ currentStep, onStepChange, theme, toggleTheme, project
           <div className="h-5 w-5 bg-accent rounded-sm flex items-center justify-center">
             <span className="text-accent-fg font-display font-bold text-[10px]">S</span>
           </div>
-          <span className="font-display font-semibold text-base tracking-tight">Synthos</span>
+          <span className="font-display font-semibold text-[1rem] tracking-tight">Synthos</span>
         </div>
         {projectName && (
           <>

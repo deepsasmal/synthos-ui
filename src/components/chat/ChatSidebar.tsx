@@ -4,7 +4,7 @@ import {
 } from "lucide-react";
 import React, { useState, useRef, useEffect, ReactNode, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { synthosApi, AgentRun, HITLRequirement } from "../../lib/synthosApi";
+import { synthosApi, HITLRequirement } from "../../lib/synthosApi";
 import { cn } from "@/src/lib/utils";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -509,15 +509,21 @@ export function ChatSidebar({ title, projectId = "", disabled: externalDisabled,
     let cancelled = false;
     setMessages([]);
     setIsLoadingHistory(true);
-    synthosApi.getTeamSessionRuns(projectId)
-      .then((runs: AgentRun[]) => {
-        if (cancelled) return;
+    synthosApi.getTeamSession(projectId)
+      .then((session) => {
+        if (cancelled || !session?.chat_history) return;
+        const stripProjectId = (s: string) =>
+          s.replace(/[\r\n]+\(project_id=[^)]+\)\s*$/, "").trim();
+
         const historical: Message[] = [];
-        for (const run of runs) {
-          if (run.status !== "COMPLETED") continue;
-          const userText = run.run_input.replace(/\n\n\(project_id=[^)]+\)\s*$/, "").trim();
-          if (userText) historical.push({ role: "user", content: userText });
-          if (run.content) historical.push({ role: "ai", content: run.content });
+        for (const msg of session.chat_history) {
+          if (msg.from_history) continue;
+          if (msg.role === "user" && msg.content) {
+            const text = stripProjectId(msg.content);
+            if (text) historical.push({ role: "user", content: text });
+          } else if (msg.role === "assistant" && msg.content && !msg.tool_calls?.length) {
+            historical.push({ role: "ai", content: msg.content });
+          }
         }
         setMessages(historical);
       })
