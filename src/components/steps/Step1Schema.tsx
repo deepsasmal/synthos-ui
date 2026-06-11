@@ -3,6 +3,8 @@ import {
   ReactFlow,
   Background,
   Controls,
+  useReactFlow,
+  ReactFlowProvider,
   applyNodeChanges,
   applyEdgeChanges,
   addEdge,
@@ -17,7 +19,8 @@ import {
   MarkerType,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Plus, Trash2, Key, Link as LinkIcon, Send, Sparkles, Loader2, ArrowRight, LayoutGrid, TableProperties } from "lucide-react";
+import Dagre from "dagre";
+import { Plus, Trash2, Key, Link as LinkIcon, Send, Sparkles, Loader2, ArrowRight, LayoutGrid, TableProperties, Shuffle } from "lucide-react";
 import { Button } from "../ui/Button";
 import { ChatSidebar } from "../chat/ChatSidebar";
 import { DataTablePanel } from "../data/DataTablePanel";
@@ -25,14 +28,48 @@ import { cn } from "@/src/lib/utils";
 import { motion, AnimatePresence } from "motion/react";
 import { synthosApi, SchemaData, DataCard } from "../../lib/synthosApi";
 
-type Column = { 
-  id: string; 
-  name: string; 
-  type: string; 
-  isPk?: boolean; 
-  isFk?: boolean; 
+type Column = {
+  id: string;
+  name: string;
+  type: string;
+  isPk?: boolean;
+  isFk?: boolean;
   isNullable?: boolean;
 };
+
+const NODE_WIDTH = 320;
+// Estimate node height from column count: header(48) + rows(36 each) + add-col footer(36)
+function estimateNodeHeight(node: Node): number {
+  const cols = (node.data?.columns as Column[] | undefined)?.length ?? 3;
+  return 48 + cols * 36 + 36;
+}
+
+// Run Dagre layout on the full node/edge set. Returns new nodes with updated positions.
+function computeAutoLayout(nodes: Node[], edges: Edge[]): Node[] {
+  if (nodes.length === 0) return nodes;
+  const g = new Dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: "LR", nodesep: 80, ranksep: 140, marginx: 60, marginy: 60 });
+
+  for (const node of nodes) {
+    g.setNode(node.id, { width: NODE_WIDTH, height: estimateNodeHeight(node) });
+  }
+  // Only add edges whose endpoints exist in this graph
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  for (const edge of edges) {
+    if (nodeIds.has(edge.source) && nodeIds.has(edge.target)) {
+      g.setEdge(edge.source, edge.target);
+    }
+  }
+
+  Dagre.layout(g);
+
+  return nodes.map((node) => {
+    const pos = g.node(node.id);
+    const h = estimateNodeHeight(node);
+    return { ...node, position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - h / 2 } };
+  });
+}
 
 // Canvas legend explaining icon meanings
 function CanvasLegend() {
@@ -540,45 +577,42 @@ const mapCanvasToSchema = (nds: Node[], eds: Edge[]): SchemaData => {
   return { tables, relationships };
 };
 
-// Translation: Map backend SchemaData format to ReactFlow nodes and edges
-const mapSchemaToCanvas = (schema: SchemaData, projectId: string): { nds: Node[]; eds: Edge[] } => {
+// Translation: Map backend SchemaData format to ReactFlow nodes and edges.
+// If any node has no saved position, dagre auto-layout is run on the full graph
+// and the results are persisted to localStorage so the user can drag from a
+// clean starting point.
+const mapSchemaToCanvas = (
+  schema: SchemaData,
+  projectId: string,
+  forceLayout = false,
+): { nds: Node[]; eds: Edge[] } => {
   const savedPositionsStr = localStorage.getItem(`synthos_positions_${projectId}`);
-  const savedPositions = savedPositionsStr ? JSON.parse(savedPositionsStr) : {};
+  const savedPositions: Record<string, { x: number; y: number }> = savedPositionsStr
+    ? JSON.parse(savedPositionsStr)
+    : {};
 
-  const nds = schema.tables.map((table, index) => {
-    const position = savedPositions[table.id] || {
-      x: (index % 3) * 350 + 100,
-      y: Math.floor(index / 3) * 350 + 100,
-    };
-
-    const columns = table.columns.map((col) => {
-      // Dynamically determine if this column is a foreign key
-      const isFk = schema.relationships.some(
-        (rel) => rel.from_table === table.id && rel.from_column === col.id
-      );
-
-      return {
-        id: col.id,
-        name: col.name,
-        type: col.type,
-        isPk: !!col.pk,
-        isFk: isFk,
-        isNullable: !!col.nullable,
-      };
-    });
+  const nds: Node[] = schema.tables.map((table) => {
+    const columns: Column[] = table.columns.map((col) => ({
+      id: col.id,
+      name: col.name,
+      type: col.type,
+      isPk: !!col.pk,
+      isFk: schema.relationships.some(
+        (rel) => rel.from_table === table.id && rel.from_column === col.id,
+      ),
+      isNullable: !!col.nullable,
+    }));
 
     return {
       id: table.id,
       type: "tableNode",
-      position,
-      data: {
-        name: table.name,
-        columns,
-      },
+      // Temporary zero position — will be replaced by saved pos or dagre below
+      position: savedPositions[table.id] ?? { x: 0, y: 0 },
+      data: { name: table.name, columns },
     };
   });
 
-  const eds = schema.relationships.map((rel) => ({
+  const eds: Edge[] = schema.relationships.map((rel) => ({
     id: rel.id,
     source: rel.from_table,
     sourceHandle: rel.from_column,
@@ -587,6 +621,17 @@ const mapSchemaToCanvas = (schema: SchemaData, projectId: string): { nds: Node[]
     data: { type: rel.type },
     ...defaultEdgeOptions,
   }));
+
+  // Run dagre when any node lacks a saved position, or when explicitly forced
+  const needsLayout = forceLayout || nds.some((n) => !savedPositions[n.id]);
+  if (needsLayout && nds.length > 0) {
+    const laid = computeAutoLayout(nds, eds);
+    // Persist computed positions so drag-moves work from a clean baseline
+    const next: Record<string, { x: number; y: number }> = {};
+    for (const n of laid) next[n.id] = n.position;
+    localStorage.setItem(`synthos_positions_${projectId}`, JSON.stringify(next));
+    return { nds: laid, eds };
+  }
 
   return { nds, eds };
 };
@@ -600,7 +645,7 @@ interface Step1SchemaProps {
   projectId: string;
 }
 
-export function Step1Schema({ onNext, theme, projectName, userName, userId, projectId }: Step1SchemaProps) {
+function Step1SchemaInner({ onNext, theme, projectName, userName, userId, projectId }: Step1SchemaProps) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [isLoadingSchema, setIsLoadingSchema] = useState(true);
@@ -838,6 +883,8 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
 
   const nodeTypes = useMemo(() => ({ tableNode: TableNode }), []);
 
+  const { fitView } = useReactFlow();
+
   const handleAddTable = useCallback(() => {
     const newTableId = `t${Date.now()}`;
     const newNode: Node = {
@@ -855,6 +902,21 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
       return nextNodes;
     });
   }, [edges, persistSchema]);
+
+  const handleAutoArrange = useCallback(() => {
+    // Clear all saved positions so mapSchemaToCanvas runs dagre on everything
+    localStorage.removeItem(`synthos_positions_${projectId}`);
+    setNodes((nds) => {
+      const laid = computeAutoLayout(nds, edges);
+      // Persist the new positions
+      const next: Record<string, { x: number; y: number }> = {};
+      for (const n of laid) next[n.id] = n.position;
+      localStorage.setItem(`synthos_positions_${projectId}`, JSON.stringify(next));
+      return laid;
+    });
+    // Fit view after React re-renders
+    setTimeout(() => fitView({ padding: 0.12, duration: 400 }), 50);
+  }, [projectId, edges, fitView]);
 
   return (
     <div className="relative flex h-full w-full overflow-hidden">
@@ -883,6 +945,15 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
             <div className="flex items-center gap-2 bg-surface border border-border p-1.5 rounded-lg shadow-lg">
               <Button variant="ghost" size="sm" className="gap-1.5 transition-all duration-150 hover:scale-105 active:scale-95" onClick={handleAddTable}>
                 <Plus className="h-3.5 w-3.5" /> Table
+              </Button>
+              <div className="w-px h-5 bg-border" />
+              <Button
+                variant="ghost" size="sm"
+                className="gap-1.5 transition-all duration-150 hover:scale-105 active:scale-95"
+                onClick={handleAutoArrange}
+                title="Auto-arrange tables based on relationships"
+              >
+                <Shuffle className="h-3.5 w-3.5" /> Auto-arrange
               </Button>
             </div>
             <CanvasLegend />
@@ -1003,5 +1074,13 @@ export function Step1Schema({ onNext, theme, projectName, userName, userId, proj
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+export function Step1Schema(props: Step1SchemaProps) {
+  return (
+    <ReactFlowProvider>
+      <Step1SchemaInner {...props} />
+    </ReactFlowProvider>
   );
 }
