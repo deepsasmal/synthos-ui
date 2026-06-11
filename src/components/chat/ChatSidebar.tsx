@@ -258,6 +258,7 @@ function ToolCallFeed({ calls }: { calls: ToolCallItem[] }) {
 }
 
 // HITL inline form — renders when TeamRunPaused fires
+// Spec: agent pre-fills tool_args; user edits then approves (confirmed:true) or rejects (confirmed:false)
 function HITLForm({
   requirements, projectId, onSubmit, onCancel,
 }: {
@@ -266,71 +267,70 @@ function HITLForm({
   onSubmit: (filled: HITLRequirement[]) => void;
   onCancel: () => void;
 }) {
-  // Use the first unanswered requirement for display; fall back to last
-  const req = requirements.find((r) => r.tool_execution?.answered == null) ?? requirements[requirements.length - 1];
+  // Active requirement = first one without a confirmed answer yet
+  const req = requirements.find((r) => r.tool_execution?.confirmed == null) ?? requirements[requirements.length - 1];
   const toolName = req?.tool_execution?.tool_name ?? "";
+  // Agent's pre-filled proposal lives in tool_args
+  const toolArgs = req?.tool_execution?.tool_args ?? {};
 
-  const [tableNames, setTableNames] = useState<string[]>([]);
-  const [sampleSizes, setSampleSizes] = useState<Record<string, number>>({});
-  const [scaleValue, setScaleValue] = useState(10);
-  const [targetRows, setTargetRows] = useState<number | "">("");
-  const [tableFilter, setTableFilter] = useState("");
+  // Init state from the agent's proposal (tool_args), not from user_input_schema
+  const initSampleSizes: Record<string, number> = toolArgs.sample_sizes && typeof toolArgs.sample_sizes === "object" ? toolArgs.sample_sizes : {};
+  const initTableNames = Object.keys(initSampleSizes);
+
+  const [tableNames, setTableNames] = useState<string[]>(initTableNames);
+  const [sampleSizes, setSampleSizes] = useState<Record<string, number>>(initSampleSizes);
+  const [scaleValue, setScaleValue] = useState<number>(typeof toolArgs.scale === "number" ? toolArgs.scale : 10);
+  const [targetRows, setTargetRows] = useState<number | "">(typeof toolArgs.target_rows === "number" ? toolArgs.target_rows : "");
+  const [tableFilter, setTableFilter] = useState<string>(toolArgs.table ?? "");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Fallback: fetch schema if agent didn't pre-fill sample_sizes (shouldn't happen normally)
   useEffect(() => {
-    if (toolName === "generate_data") {
-      // Use existing values from requirement schema if present (re-pause scenario)
-      const existingField = req?.user_input_schema?.find((f) => f.name === "sample_sizes");
-      const existingMap: Record<string, number> | null =
-        existingField?.value && typeof existingField.value === "object" ? existingField.value : null;
-
+    if (toolName === "generate_data" && tableNames.length === 0) {
       synthosApi.getSchema(projectId)
         .then((s) => {
           const names = s.schema_data.tables.map((t) => t.name);
           setTableNames(names);
-          setSampleSizes(Object.fromEntries(names.map((n) => [n, existingMap?.[n] ?? 20])));
+          setSampleSizes(Object.fromEntries(names.map((n) => [n, 20])));
         })
         .catch(() => {});
     }
-  }, [projectId, toolName, req]);
+  }, [projectId, toolName, tableNames.length]);
 
-  const buildFilled = (): HITLRequirement[] => {
-    const vals: Record<string, any> = {};
+  // Set confirmed:true + edited tool_args on the active requirement; pass others through
+  const buildApprove = (): HITLRequirement[] => {
+    const editedArgs: Record<string, any> = { ...toolArgs };
     if (toolName === "generate_data") {
-      vals["sample_sizes"] = sampleSizes;
+      editedArgs.sample_sizes = sampleSizes;
     } else if (toolName === "scale_data") {
-      vals["scale"] = scaleValue;
-      if (targetRows !== "") vals["target_rows"] = targetRows;
-      if (tableFilter) vals["table"] = tableFilter;
-    } else {
-      // Generic: pass through any existing values
+      editedArgs.scale = scaleValue;
+      if (targetRows !== "") editedArgs.target_rows = targetRows;
+      else delete editedArgs.target_rows;
+      if (tableFilter) editedArgs.table = tableFilter;
+      else delete editedArgs.table;
     }
-
-    const fillSchema = (fields: HITLRequirement["user_input_schema"]) =>
-      fields.map((f) => ({ ...f, value: vals[f.name] !== undefined ? vals[f.name] : f.value }));
-
-    return requirements.map((r) => {
-      // Pass already-answered requirements through unchanged
-      if (r.tool_execution?.answered === true) return r;
-      return {
+    return requirements.map((r) =>
+      r.tool_execution?.confirmed != null ? r : {
         ...r,
-        user_input_schema: fillSchema(r.user_input_schema ?? []),
-        tool_execution: {
-          ...r.tool_execution,
-          user_input_schema: fillSchema(r.tool_execution?.user_input_schema ?? []),
-        },
-      };
-    });
+        tool_execution: { ...r.tool_execution, confirmed: true, tool_args: editedArgs },
+      }
+    );
   };
 
-  const title = toolName === "generate_data" ? "Confirm Data Generation"
-    : toolName === "scale_data" ? "Confirm Scaling"
-    : "Confirm Action";
-  const submitLabel = toolName === "generate_data" ? "Generate →"
-    : toolName === "scale_data" ? "Scale →"
-    : "Confirm →";
-  const canSubmit = !submitting && (toolName !== "generate_data" || tableNames.length > 0);
+  // Set confirmed:false on the active requirement
+  const buildReject = (): HITLRequirement[] =>
+    requirements.map((r) =>
+      r.tool_execution?.confirmed != null ? r : {
+        ...r,
+        tool_execution: { ...r.tool_execution, confirmed: false },
+      }
+    );
+
+  const title = toolName === "generate_data" ? "Review & Confirm Generation"
+    : toolName === "scale_data" ? "Review & Confirm Scaling"
+    : "Review & Confirm";
+  const canApprove = !submitting && (toolName !== "generate_data" || tableNames.length > 0);
 
   return (
     <motion.div
@@ -362,10 +362,10 @@ function HITLForm({
                   <div key={name} className="flex items-center gap-2 bg-white/5 border border-border/50 rounded-lg px-2.5 py-1.5">
                     <span className="text-[11px] font-mono text-muted/60 flex-1 truncate">{name}</span>
                     <input
-                      type="number" min={1} max={10000}
+                      type="number" min={1} max={1000000}
                       value={sampleSizes[name] ?? 20}
                       onChange={(e) => setSampleSizes((prev) => ({ ...prev, [name]: parseInt(e.target.value) || 20 }))}
-                      className="w-14 bg-transparent text-right text-[11px] font-mono text-[color:var(--text-color)] focus:outline-none border-b border-border/40 focus:border-accent/60 pb-0.5"
+                      className="w-16 bg-transparent text-right text-[11px] font-mono text-[color:var(--text-color)] focus:outline-none border-b border-border/40 focus:border-accent/60 pb-0.5"
                     />
                   </div>
                 ))}
@@ -380,7 +380,7 @@ function HITLForm({
               <span className="text-[10px] font-mono text-muted/50 uppercase tracking-wider">Scale factor</span>
               <div className="flex items-center gap-2.5">
                 <input
-                  type="number" min={2} max={1000}
+                  type="number" min={2} max={10000}
                   value={scaleValue}
                   onChange={(e) => setScaleValue(Number(e.target.value) || 10)}
                   className="w-20 bg-white/5 border border-border/50 rounded-lg px-3 py-1.5 text-sm font-mono text-[color:var(--text-color)] focus:outline-none focus:border-accent/60 text-center"
@@ -407,7 +407,8 @@ function HITLForm({
                 >
                   <div className="flex items-center gap-2.5">
                     <span className="text-[10px] font-mono text-muted/40 w-20 shrink-0">Target rows</span>
-                    <input type="number" value={targetRows} onChange={(e) => setTargetRows(e.target.value ? Number(e.target.value) : "")}
+                    <input type="number" value={targetRows}
+                      onChange={(e) => setTargetRows(e.target.value ? Number(e.target.value) : "")}
                       placeholder="auto"
                       className="w-24 bg-white/5 border border-border/40 rounded px-2 py-1 text-[11px] font-mono text-[color:var(--text-color)] focus:outline-none focus:border-accent/40 placeholder:text-muted/25" />
                   </div>
@@ -424,21 +425,30 @@ function HITLForm({
         )}
       </div>
 
-      {/* Footer */}
+      {/* Footer — Dismiss (no call), Reject (confirmed:false), Approve (confirmed:true) */}
       <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-accent/10">
-        <button onClick={onCancel} className="px-3 py-1.5 text-[11px] font-mono text-muted/50 hover:text-muted/80 transition-colors rounded-lg hover:bg-white/5">
-          Cancel
+        <button onClick={onCancel}
+          className="px-3 py-1.5 text-[11px] font-mono text-muted/40 hover:text-muted/70 transition-colors rounded-lg hover:bg-white/5">
+          Dismiss
         </button>
         <motion.button
           whileTap={{ scale: 0.95 }}
-          onClick={() => { setSubmitting(true); onSubmit(buildFilled()); }}
-          disabled={!canSubmit}
+          onClick={() => { setSubmitting(true); onSubmit(buildReject()); }}
+          disabled={submitting}
+          className="px-3 py-1.5 text-[11px] font-mono rounded-lg transition-all border border-red-500/25 text-red-400/60 hover:bg-red-500/8 hover:text-red-400 hover:border-red-500/40 disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          Reject
+        </motion.button>
+        <motion.button
+          whileTap={{ scale: 0.95 }}
+          onClick={() => { setSubmitting(true); onSubmit(buildApprove()); }}
+          disabled={!canApprove}
           className={cn(
             "px-3 py-1.5 text-[11px] font-mono rounded-lg transition-all flex items-center gap-1.5",
-            canSubmit ? "bg-accent text-accent-fg hover:opacity-90 cursor-pointer" : "bg-accent/30 text-accent-fg/40 cursor-not-allowed"
+            canApprove ? "bg-accent text-accent-fg hover:opacity-90 cursor-pointer" : "bg-accent/30 text-accent-fg/40 cursor-not-allowed"
           )}
         >
-          {submitting ? <><Loader2 className="w-3 h-3 animate-spin" /> Working…</> : submitLabel}
+          {submitting ? <><Loader2 className="w-3 h-3 animate-spin" /> Working…</> : "Approve →"}
         </motion.button>
       </div>
     </motion.div>

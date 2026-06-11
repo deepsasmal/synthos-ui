@@ -98,11 +98,14 @@ export interface HITLRequirement {
     tool_call_id: string;
     tool_name: string;
     tool_args: Record<string, any>;
-    requires_user_input: boolean;
-    user_input_schema: HITLField[];
+    requires_confirmation?: boolean | null;
+    confirmed?: boolean | null;
+    confirmation_note?: string | null;
+    requires_user_input?: boolean;
+    user_input_schema?: HITLField[];
     answered?: boolean | null;
   };
-  user_input_schema: HITLField[];
+  user_input_schema?: HITLField[];
   member_agent_id?: string;
   member_agent_name?: string;
   member_run_id?: string;
